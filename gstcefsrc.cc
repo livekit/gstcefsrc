@@ -64,6 +64,7 @@ enum
   PROP_JS_FLAGS,
   PROP_LOG_SEVERITY,
   PROP_CEF_CACHE_LOCATION,
+  PROP_AWAIT_CONSOLE_MESSAGE,
 };
 
 #define gst_cef_src_parent_class parent_class
@@ -285,6 +286,19 @@ public:
       break;
     };
 
+    if (mElement->await_console_message != NULL) {
+      const gchar *msg = (const gchar *) message.ToString().c_str();
+      if (mElement->await_console_message == msg) {
+        g_free(mElement->await_console_message);
+        mElement->await_console_message = NULL;
+
+        g_mutex_lock (&mElement->state_lock);
+        mElement->started = TRUE;
+        g_cond_signal (&mElement->state_cond);
+        g_mutex_unlock(&mElement->state_lock);
+      }
+    }
+
     GstMessage *m = gst_message_new_element (GST_OBJECT (mElement),
         gst_structure_new ("cefconsole",
             "level", G_TYPE_STRING, severity,
@@ -383,10 +397,12 @@ void BrowserClient::MakeBrowser(int arg)
 
   mElement->browser = browser;
 
-  g_mutex_lock (&mElement->state_lock);
-  mElement->started = TRUE;
-  g_cond_signal (&mElement->state_cond);
-  g_mutex_unlock(&mElement->state_lock);
+  if (mElement->await_console_message == NULL) {
+    g_mutex_lock (&mElement->state_lock);
+    mElement->started = TRUE;
+    g_cond_signal (&mElement->state_cond);
+    g_mutex_unlock(&mElement->state_lock);
+  }
 }
 
 void BrowserClient::CloseBrowser(int arg)
@@ -818,6 +834,10 @@ gst_cef_src_set_property (GObject * object, guint prop_id, const GValue * value,
       src->cef_cache_location = g_value_dup_string (value);
       break;
     }
+    case PROP_AWAIT_CONSOLE_MESSAGE: {
+      g_free (src->await_console_message);
+      src->await_console_message = g_value_dup_string (value);
+    }
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -855,6 +875,8 @@ gst_cef_src_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_CEF_CACHE_LOCATION:
       g_value_set_string (value, src->cef_cache_location);
       break;
+    case PROP_AWAIT_CONSOLE_MESSAGE:
+      g_value_set_string (value, src->await_console_message);
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -876,6 +898,7 @@ gst_cef_src_finalize (GObject *object)
 
   g_free (src->js_flags);
   g_free (src->cef_cache_location);
+  g_free (src->await_console_message);
 
   g_cond_clear(&src->state_cond);
   g_mutex_clear(&src->state_lock);
@@ -896,6 +919,7 @@ gst_cef_src_init (GstCefSrc * src)
   src->js_flags = NULL;
   src->log_severity = DEFAULT_LOG_SEVERITY;
   src->cef_cache_location = NULL;
+  src->await_console_message = NULL;
 
   gst_base_src_set_format (base_src, GST_FORMAT_TIME);
   gst_base_src_set_live (base_src, TRUE);
@@ -960,6 +984,11 @@ gst_cef_src_class_init (GstCefSrcClass * klass)
           "Cache location for CEF. Defaults to in memory cache. "
           "(Example: /tmp/cef-cache/)",
           NULL, (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY)));
+
+  g_object_class_install_property (gobject_class, PROP_AWAIT_CONSOLE_MESSAGE,
+    g_param_spec_string ("await-console-message", "await_console_message",
+        "Do not start playing until a console message is received.",
+        NULL, (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY)));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "Chromium Embedded Framework source", "Source/Video",

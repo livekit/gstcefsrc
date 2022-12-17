@@ -41,6 +41,7 @@ struct _GstCefSrc {
   gchar *js_flags;
   cef_log_severity_t log_severity;
   gchar *cef_cache_location;
+  gchar *await_console_message;
   gboolean gpu;
   gboolean sandbox;
   gint chromium_debug_port;
